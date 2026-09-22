@@ -1,0 +1,280 @@
+/* USER CODE BEGIN Header */
+/**
+ ******************************************************************************
+ * @file           : main.c
+ * @brief          : Main program body
+ ******************************************************************************
+ * @attention
+ *
+ * Copyright (c) 2026 STMicroelectronics.
+ * All rights reserved.
+ *
+ * This software is licensed under terms that can be found in the LICENSE file
+ * in the root directory of this software component.
+ * If no LICENSE file comes with this software, it is provided AS-IS.
+ *
+ ******************************************************************************
+ */
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+#include "cmsis_os.h"
+#include "gpio.h"
+#include "tim.h"
+#include "usart.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+
+#include <stdio.h>
+#include <string.h>
+
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+
+/* USER CODE BEGIN PV */
+
+uint8_t rx_byte;                // 接收单个字节
+uint8_t rx_buffer[50];          // 接收指令缓存区
+uint8_t rx_index = 0;           // 缓存区索引
+uint8_t tx_buf[8];              // 发送缓存（必须全局，否则中断发送会乱码）
+volatile uint8_t send_flag = 0; // 发送标志位 (0:不发送, 1:请求发送)
+float g_kp_value = 0.0f;
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+void MX_FREERTOS_Init(void);
+/* USER CODE BEGIN PFP */
+
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+// 发送3通道数据给Synex
+void Send_Float_Via_JustFloat(UART_HandleTypeDef *huart, float data)
+{
+  memcpy(tx_buf, &data, 4);
+  tx_buf[4] = 0x00;
+  tx_buf[5] = 0x00;
+  tx_buf[6] = 0x80;
+  tx_buf[7] = 0x7F;
+  HAL_UART_Transmit_IT(huart, tx_buf, 8);
+}
+
+// 蜂鸣器编号
+#define CAR_ID 1
+void Play_Note(uint32_t arr_value, uint32_t duration)
+{
+  __HAL_TIM_SET_AUTORELOAD(&htim4, arr_value);
+  __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_3, arr_value / 2);
+  HAL_Delay(duration);
+  HAL_Delay(50);
+}
+
+/* USER CODE END 0 */
+
+/**
+ * @brief  The application entry point.
+ * @retval int
+ */
+int main(void)
+{
+
+  /* USER CODE BEGIN 1 */
+
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_TIM4_Init();
+  MX_TIM5_Init();
+  MX_USART1_UART_Init();
+  /* USER CODE BEGIN 2 */
+
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_3); // 启动蜂鸣器
+
+#if CAR_ID == 1
+                                            // 1号车：升调（哆 来 咪）
+  Play_Note(1911, 200); // Do (523Hz)
+  Play_Note(1701, 200); // Re (587Hz)
+  Play_Note(1516, 400); // Mi (659Hz)
+#elif CAR_ID == 2
+                                            // 2号车：降调（咪 来 哆）
+  Play_Note(1516, 200);
+  Play_Note(1701, 200);
+  Play_Note(1911, 400);
+#endif
+
+  HAL_TIM_PWM_Stop(&htim4, TIM_CHANNEL_3);
+
+  // 启动串口接收中断
+  HAL_UART_Receive_IT(&huart1, &rx_byte, 1);
+
+  // PWM
+  HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_3);
+
+  /* USER CODE END 2 */
+
+  /* Init scheduler */
+  osKernelInitialize(); /* Call init function for freertos objects (in cmsis_os2.c) */
+  MX_FREERTOS_Init();
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+ * @brief System Clock Configuration
+ * @retval None
+ */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+   */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+   * in the RCC_OscInitTypeDef structure.
+   */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 8;
+  RCC_OscInitStruct.PLL.PLLN = 168;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLQ = 4;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+   */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/* USER CODE BEGIN 4 */
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+  if (huart->Instance == USART1)
+  {
+    if (rx_index < sizeof(rx_buffer) - 1)
+    {
+      rx_buffer[rx_index++] = rx_byte;
+    }
+    else
+    {
+      rx_index = sizeof(rx_buffer) - 1;
+    }
+
+    if (rx_byte == '\r' || rx_index >= sizeof(rx_buffer) - 1)
+    {
+      rx_buffer[rx_index] = '\0';
+      float kp_value = 0.0f;
+      if (sscanf((char *)rx_buffer, "kp=%f", &kp_value) == 1)
+      {
+        g_kp_value = kp_value; // 存入全局变量
+        send_flag = 1;         // 置标志位
+      }
+      rx_index = 0;
+    }
+    HAL_UART_Receive_IT(huart, &rx_byte, 1);
+  }
+}
+
+/* USER CODE END 4 */
+
+/**
+ * @brief  This function is executed in case of error occurrence.
+ * @retval None
+ */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+#ifdef USE_FULL_ASSERT
+/**
+ * @brief  Reports the name of the source file and the source line number
+ *         where the assert_param error has occurred.
+ * @param  file: pointer to the source file name
+ * @param  line: assert_param error line source number
+ * @retval None
+ */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */
